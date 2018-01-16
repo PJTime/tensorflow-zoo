@@ -18,9 +18,9 @@ def doublewrap(function):
     """
     @functools.wraps(function)
     def decorator(*args, **kwargs):
-        if len(args) == 1 and len(kwargs) == 0 and callable(args[0]):
+       if len(args) == 1 and len(kwargs) == 0 and callable(args[0]):
             return function(args[0])
-        else:
+       else:
             return lambda wrapee: function(wrapee, *args, **kwargs)
     return decorator
 
@@ -65,7 +65,8 @@ class Model(object):
 
     def __init__(self, input_size, label_size, learning_rate,
                  enqueue_threads, val_enqueue_threads, data_dir,
-                 train_file, validation_file):
+                 train_file, validation_file, x, keep_prob, num_classes,
+                 skip_layer, weights_path='DEFAULT'):
 
         # Internalize instantiation parameters
         self.label_size = label_size
@@ -91,15 +92,15 @@ class Model(object):
         self.error
     
         # Variables for Alexnet
-        self.X = x
-        self.NUM_CLASSES = num_classes
-        self.KEEP_PROB = keep_prob
-        self.SKIP_LAYER = skip_layer
-
-        if weights_path == 'DEFAULT':
-            self.Weights_Path = 'bvlc_alexnet.npy'
-        else:
-            self.WEIGHTS_PATH = weights_path
+#        self.X = x
+#        self.NUM_CLASSES = num_classes
+#        self.KEEP_PROB = keep_prob
+#        self.SKIP_LAYER = skip_layer
+#
+#        if weights_path == 'DEFAULT':
+#            self.WEIGHTS_PATH = 'bvlc_alexnet.npy'
+#        else:
+#            self.WEIGHTS_PATH = weights_path
 
     def variable_summaries(self, var):
         """Attach a lot of summaries to a Tensor
@@ -186,42 +187,42 @@ class Model(object):
         return relu
 
 
-	def fc(x, num_in, num_out, name, relu=True):
-	    """Create a fully connected layer."""
-	    with tf.variable_scope(name) as scope:
+    def fc(x, num_in, num_out, name, relu=True):
+        """Create a fully connected layer."""
+        with tf.variable_scope(name) as scope: 
 
-		# Create tf variables for the weights and biases
-		weights = tf.get_variable('weights', shape=[num_in, num_out],
-					  trainable=True)
-		biases = tf.get_variable('biases', [num_out], trainable=True)
+        # Create tf variables for the weights and biases
+            weights = tf.get_variable('weights', shape=[num_in, num_out],
+                          trainable=True)
+            biases = tf.get_variable('biases', [num_out], trainable=True)
+    
+            # Matrix multiply weights and inputs and add bias
+            act = tf.nn.xw_plus_b(x, weights, biases, name=scope.name)
+    
+        if relu:
+            # Apply ReLu non linearity
+            relu = tf.nn.relu(act)
+            return relu
+        else:
+            return act
 
-		# Matrix multiply weights and inputs and add bias
-		act = tf.nn.xw_plus_b(x, weights, biases, name=scope.name)
 
-	    if relu:
-		# Apply ReLu non linearity
-		relu = tf.nn.relu(act)
-		return relu
-	    else:
-		return act
+    def max_pool(x, filter_height, filter_width, stride_y, stride_x, name,
+         padding='SAME'):
+        """Create a max pooling layer."""
+        return tf.nn.max_pool(x, ksize=[1, filter_height, filter_width, 1],
+                           strides=[1, stride_y, stride_x, 1],
+                           padding=padding, name=name)
 
+    def lrn(x, radius, alpha, beta, name, bias=1.0):
+        """Create a local response normalization layer."""
+        return tf.nn.local_response_normalization(x, depth_radius=radius,
+                          alpha=alpha, beta=beta,
+                          bias=bias, name=name)
 
-	def max_pool(x, filter_height, filter_width, stride_y, stride_x, name,
-		     padding='SAME'):
-	    """Create a max pooling layer."""
-	    return tf.nn.max_pool(x, ksize=[1, filter_height, filter_width, 1],
-				                        strides=[1, stride_y, stride_x, 1],
-				                        padding=padding, name=name)
-
-	def lrn(x, radius, alpha, beta, name, bias=1.0):
-	    """Create a local response normalization layer."""
-	    return tf.nn.local_response_normalization(x, depth_radius=radius,
-						                          alpha=alpha, beta=beta,
-						                          bias=bias, name=name)
-
-	def dropout(x, keep_prob):
-	    """Create a dropout layer."""
-	return tf.nn.dropout(x, keep_prob)
+    def dropout(x, keep_prob):
+        """Create a dropout layer."""
+        return tf.nn.dropout(x, keep_prob)
 
 
     def read_and_decode_mnist(self, filename_queue):
@@ -331,15 +332,20 @@ class Model(object):
         print_tensor_shape(self.stimulus_placeholder, 'images shape')
         print_tensor_shape(self.target_placeholder, 'label shape')
 
-	################################
-	#Layers provided by Frederick Kratzert
-	#https://github.com/kratzert/finetune_alexnet_with_tensorflow/
-	#blob/master/alexnet.py
-	################################
+        ################################
+        #Layers provided by Frederick Kratzert
+        #https://github.com/kratzert/finetune_alexnet_with_tensorflow/
+        #blob/master/alexnet.py
+        ################################
+    
+        # resize the image tensors to add channels, 1 in this case
+        # required to pass the images to various layers upcoming in the graph
+        images_re = tf.reshape(self.stimulus_placeholder, [-1, 28, 28, 1])
+        print_tensor_shape(images_re, 'reshaped images shape')
 
-	# 1st Layer: Conv (w ReLu) -> Lrn -> Pool
+        # 1st Layer: Conv (w ReLu) -> Lrn -> Pool
         with tf.name_scope('Conv1'): 
-            conv1 = self.conv(self.X, 11, 11, 96, 4, 4, padding='VALID', 
+            conv1 = self.conv(images_re, 11, 11, 96, 4, 4, padding='VALID', 
                                        name='conv1')
         with tf.name_scope('Norm1'):
             norm1 = self.lrn(conv1, 2, 2e-05, 0.75, name='norm1')
@@ -391,11 +397,11 @@ class Model(object):
 
         # 8th Layer: FC and return unscaled activations
         with tf.name_scope('fully_connected3'):
-            self.fc8 = self.fc(dropout7, 4096, self.NUM_CLASSES, 
+            self.fc8 = self.fc(dropout7, 4096, self.label_size, 
                                             relu=False, name='fc8')
 
         ###############################
-	
+    
     @define_scope
     def loss(self):
 
